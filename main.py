@@ -1,14 +1,16 @@
 from DataAnalysis import DataAnalysis
 
-files = ["C:\\Users\\gukov\\Desktop\\НИИ МА НАУКА\\0gr_100.txt"]
+files = ["C:\\Users\\gukov\\Desktop\\НИИ МА НАУКА\\0gr_100.txt",
+         "C:\\Users\\gukov\\Desktop\\НИИ МА НАУКА\\0gr_250.txt",
+         "C:\\Users\\gukov\\Desktop\\НИИ МА НАУКА\\30gr_250.txt",
+         "C:\\Users\\gukov\\Desktop\\НИИ МА НАУКА\\30gr_test.txt"]
 
 
 def main():
+    data_process = DataAnalysis()
     for file in files:
-        with open(file, 'r') as f:
-            text = f.readlines()
-        data_process = DataAnalysis()
-        data_process.analysis(text)
+        print(file + " is processed")
+        data_process.file_analysis(file, 10000, "C:\\Users\\gukov\\Desktop\\workParser")
 
 
 if __name__ == '__main__':

@@ -1,43 +1,49 @@
 from enum import Enum
+import logging
+import sys
 
 
 def cut_fields(line: str):
     str_split = line.split(' ')
-    return str_split[0], str_split[1], str_split[2]
+    match str_split:
+        case date, time, code, *msg:
+            return date, time, code
+        case _:
+            return "none", "none", "none"
 
 
 class DataAnalysis:
     thrErrors = 64
     Block = Enum("Block", "none mem05 mem0A mem15 mem1A spiqf uart0 uart1 i2c spod", start=0)
     pattern = {
-        Block.mem05 : 0x55555555,
-        Block.mem0A : 0xAAAAAAAA,
-        Block.mem15 : 0x55555555,
-        Block.mem1A : 0xAAAAAAAA,
-        Block.spiqf : {
-            0x0 : 0,
-            0x1 : 0,
-            0x2 : 0
+        Block.mem05: 0x55555555,
+        Block.mem0A: 0xAAAAAAAA,
+        Block.mem15: 0x55555555,
+        Block.mem1A: 0xAAAAAAAA,
+        Block.spiqf: {
+            0x0: 0,
+            0x1: 0,
+            0x2: 0
         },
-        Block.uart0 : {
-            0x0 : 0,
-            0x1 : 0,
-            0x2 : 0
+        Block.uart0: {
+            0x0: 0,
+            0x1: 0,
+            0x2: 0
         },
-        Block.uart1 : {
-            0x0 : 0,
-            0x1 : 0,
-            0x2 : 0
+        Block.uart1: {
+            0x0: 0,
+            0x1: 0,
+            0x2: 0
         },
-        Block.i2c   : {
-            0x0 : 0,
-            0x1 : 0,
-            0x2 : 0
+        Block.i2c: {
+            0x0: 0,
+            0x1: 0,
+            0x2: 0
         },
-        Block.spod  : {
-            0x0 : 0,
-            0x1 : 0,
-            0x2 : 0
+        Block.spod: {
+            0x0: 0,
+            0x1: 0,
+            0x2: 0
         }
     }
 
@@ -55,18 +61,22 @@ class DataAnalysis:
         spod = 0xF0DA0060
         endMsg = 0xF0DA0EFF
         sequence = 0xF0DA0F00
+        hashErr = 0xF0DA0F01
         silence = 0xF0DA0F02
 
     brief = {
-        Block.mem05: 0,
-        Block.mem0A: 0,
-        Block.mem15: 0,
-        Block.mem1A: 0,
-        Block.spiqf: 0,
-        Block.uart0: 0,
-        Block.uart1: 0,
-        Block.i2c:   0,
-        Block.spod:  0
+        Block.mem05:        0,
+        Block.mem0A:        0,
+        Block.mem15:        0,
+        Block.mem1A:        0,
+        Block.spiqf:        0,
+        Block.uart0:        0,
+        Block.uart1:        0,
+        Block.i2c:          0,
+        Block.spod:         0,
+        "hashErr":          0,
+        "processedLines":   0,
+        "skippedLines":     0
     }
 
     StateMsg = Enum("StateMsg", "start header numb addr error hash end angle", start=0)
@@ -79,7 +89,9 @@ class DataAnalysis:
     angle = 0
 
     def __init__(self):
+        logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
         self.clear()
+        self.brief_clear()
 
     def clear(self):
         self.block = self.Block.none
@@ -89,11 +101,36 @@ class DataAnalysis:
         self.hash = 0
         self.angle = 0
 
+    def brief_clear(self):
+        self.brief[self.Block.mem05] = 0
+        self.brief[self.Block.mem0A] = 0
+        self.brief[self.Block.mem15] = 0
+        self.brief[self.Block.mem1A] = 0
+        self.brief[self.Block.spiqf] = 0
+        self.brief[self.Block.uart0] = 0
+        self.brief[self.Block.uart1] = 0
+        self.brief[self.Block.i2c] = 0
+        self.brief[self.Block.spod] = 0
+        self.brief["hashErr"] = 0
+        self.brief["processedLines"] = 0
+        self.brief["skippedLines"] = 0
+
+    def file_analysis(self, filename: str, numStr: int, workDir: str):
+        with open(filename, 'r') as f:
+            text = f.readlines()
+        self.analysis(text)
+        self.clear()
+        self.brief_clear()
+
     def analysis(self, text: list):
         state = self.StateMsg.start
         nxt_state = self.StateMsg.start
         for line in text:
+            self.brief["processedLines"] += 1
             date, time, code = cut_fields(line)
+            if code == "none":
+                self.brief["skippedLines"] += 1
+                continue
             code = int(code, 16)
             errors = 0
             xor = ""
@@ -125,16 +162,29 @@ class DataAnalysis:
             state = nxt_state
             if self.block != self.Block.none:
                 self.brief[self.block] += errors
-        print("finish")
+        for key, value in self.brief.items():
+            print(f"  {key:14s}: {value}")
 
     def message_process(self, state: StateMsg, code: int):
         if state != self.StateMsg.hash and state != self.StateMsg.end and state != self.StateMsg.angle:
             self.hash ^= code
+        match code:
+            case self.CodeVal.hashErr.value:
+                self.brief["hashErr"] += 1
+                self.hash = 0
+                return self.StateMsg.start
+            case self.CodeVal.startChip.value:
+                self.brief["startChip"] += 1
+                self.hash = 0
+                return self.StateMsg.start
         match state:
             case self.StateMsg.start:
+                self.clear()
                 if code != self.CodeVal.beginMsg.value:
-                    raise Exception("Invalid begin" + str(code))
-                self.block = self.Block.none
+                    self.brief["skippedLines"] += 1
+                    # logging.debug("Invalid begin " + str(code) + ", line " + str(self.brief["processedLines"]))
+                    return self.StateMsg.start
+                self.hash = code
                 return self.StateMsg.header
             case self.StateMsg.header:
                 if code == self.CodeVal.mem05.value:
@@ -156,7 +206,9 @@ class DataAnalysis:
                 elif code == self.CodeVal.spod.value:
                     self.block = self.Block.spod
                 else:
-                    raise Exception("Invalid block")
+                    self.brief["skippedLines"] += 1
+                    # logging.debug("Invalid Block " + str(code) + ", line " + str(self.brief["processedLines"]))
+                    return self.StateMsg.start
                 return self.StateMsg.numb
             case self.StateMsg.numb:
                 self.numb_errors = code
@@ -170,7 +222,9 @@ class DataAnalysis:
                 local_numb = self.numb_errors if self.numb_errors <= self.thrErrors else self.thrErrors
                 return self.StateMsg.addr if self.id_error < local_numb else self.StateMsg.hash
             case self.StateMsg.hash:
+                self.block = self.Block.none
                 if code != self.hash:
+                    print(str(code) + " " + str(self.hash))
                     raise Exception("Invalid hash")
                 self.hash = 0
                 return self.StateMsg.end
