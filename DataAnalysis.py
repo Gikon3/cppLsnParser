@@ -1,6 +1,7 @@
 from enum import Enum
 import logging
 import sys
+import os
 
 
 def cut_fields(line: str):
@@ -144,6 +145,7 @@ class DataAnalysis:
 
     def __init__(self):
         logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
+        self.cur_filename = ""
         self.clear()
         self.local_brief_clear()
         self.brief_clear()
@@ -182,12 +184,13 @@ class DataAnalysis:
         self.brief["processedLines"] = 0
         self.brief["skippedLines"] = 0
 
-    def file_analysis(self, filename: str, num_str: int, work_dir: str):
+    def file_analysis(self, filename: str, num_str: int):
+        self.cur_filename = filename
+        self.clear()
+        self.brief_clear()
         with open(filename, 'r') as f:
             text = f.readlines()
         self.analysis(text)
-        self.clear()
-        self.brief_clear()
 
     def analysis(self, text: list):
         state = self.StateMsg.start
@@ -321,3 +324,13 @@ class DataAnalysis:
                     raise Exception("Invalid angle")
                 self.angle = code
                 return self.StateMsg.start
+
+    def write_brief(self, filename):
+        work_dir = os.path.split(filename)[0]
+        if not os.path.isdir(work_dir):
+            os.makedirs(work_dir)
+        text = [self.cur_filename + "\n"]
+        for key, value in self.brief.items():
+            text.append(f"  {key:14s} {value}\n")
+        with open(filename, 'a') as f:
+            f.writelines(text)
