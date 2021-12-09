@@ -13,7 +13,7 @@ def cut_fields(line: str):
             return "none", "none", "none"
 
 
-def mem_process(val, pattern):
+def mem_process(val: int, pattern: int):
     xor = ""
     count = 0
     for i in range(32):
@@ -27,9 +27,9 @@ def mem_process(val, pattern):
             count += 1
         else:
             xor += 'X'
-        val >> 1
-        pattern >> 1
-    return count, xor
+        val = val >> 1
+        pattern = pattern >> 1
+    return count, xor[::-1]
 
 
 def spiqf_process(val):
@@ -212,16 +212,21 @@ class DataAnalysis:
                 self.clear()
                 self.local_brief_clear()
             nxt_state = self.message_process(state, code)
+            pattern = ""
             if state == self.StateMsg.error:
                 match self.block:
                     case self.Block.mem05:
-                        errors, xor = mem_process(code, self.CodeVal.mem05.value)
+                        pattern = f"{self.pattern[self.Block.mem05]:08X}"
+                        errors, xor = mem_process(code, self.pattern[self.Block.mem05])
                     case self.Block.mem0A:
-                        errors, xor = mem_process(code, self.CodeVal.mem0A.value)
+                        pattern = f"{self.pattern[self.Block.mem0A]:08X}"
+                        errors, xor = mem_process(code, self.pattern[self.Block.mem0A])
                     case self.Block.mem15:
-                        errors, xor = mem_process(code, self.CodeVal.mem15.value)
+                        pattern = f"{self.pattern[self.Block.mem15]:08X}"
+                        errors, xor = mem_process(code, self.pattern[self.Block.mem15])
                     case self.Block.mem1A:
-                        errors, xor = mem_process(code, self.CodeVal.mem1A.value)
+                        pattern = f"{self.pattern[self.Block.mem1A]:08X}"
+                        errors, xor = mem_process(code, self.pattern[self.Block.mem1A])
                     case self.Block.spiqf:
                         errors, xor = spiqf_process(code)
                     case self.Block.uart0:
