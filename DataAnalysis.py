@@ -2,6 +2,9 @@ from enum import Enum
 import logging
 import sys
 import os
+import json
+import datetime
+import time
 
 
 def cut_fields(line: str):
@@ -133,6 +136,7 @@ class DataAnalysis:
         Block.i2c: 0,
         Block.spod: 0
     }
+    datetime_format = "%d.%m.%Y %H:%M:%S"
 
     StateMsg = Enum("StateMsg", "start header numb addr error hash end angle", start=0)
 
@@ -143,14 +147,23 @@ class DataAnalysis:
     hash = 0
     angle = 0
 
+    cur_filename = ""
+    mem_packets = []
+    local_mem_packet = {}
+
     def __init__(self):
         logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
-        self.cur_filename = ""
         self.clear()
+
+    def clear(self):
+        self.cur_filename = ""
+        packets = json.dumps([], sort_keys=True, indent=4)
+        local_packet = []
+        self.pkt_clear()
         self.local_brief_clear()
         self.brief_clear()
 
-    def clear(self):
+    def pkt_clear(self):
         self.block = self.Block.none
         self.numb_errors = 0
         self.id_error = 0
@@ -159,34 +172,16 @@ class DataAnalysis:
         self.angle = 0
 
     def local_brief_clear(self):
-        self.local_brief[self.Block.mem05] = 0
-        self.local_brief[self.Block.mem0A] = 0
-        self.local_brief[self.Block.mem15] = 0
-        self.local_brief[self.Block.mem1A] = 0
-        self.local_brief[self.Block.spiqf] = 0
-        self.local_brief[self.Block.uart0] = 0
-        self.local_brief[self.Block.uart1] = 0
-        self.local_brief[self.Block.i2c] = 0
-        self.local_brief[self.Block.spod] = 0
+        for key in self.brief.keys():
+            self.local_brief[key] = 0
 
     def brief_clear(self):
-        self.brief[self.Block.mem05] = 0
-        self.brief[self.Block.mem0A] = 0
-        self.brief[self.Block.mem15] = 0
-        self.brief[self.Block.mem1A] = 0
-        self.brief[self.Block.spiqf] = 0
-        self.brief[self.Block.uart0] = 0
-        self.brief[self.Block.uart1] = 0
-        self.brief[self.Block.i2c] = 0
-        self.brief[self.Block.spod] = 0
-        self.brief["hashErr"] = 0
-        self.brief["silence"] = 0
-        self.brief["processedLines"] = 0
-        self.brief["skippedLines"] = 0
+        for key in self.brief.keys():
+            self.brief[key] = 0
 
     def file_analysis(self, filename: str, num_str: int):
         self.cur_filename = filename
-        self.clear()
+        self.pkt_clear()
         self.brief_clear()
         with open(filename, 'r') as f:
             text = f.readlines()
@@ -194,10 +189,9 @@ class DataAnalysis:
 
     def analysis(self, text: list):
         state = self.StateMsg.start
-        nxt_state = self.StateMsg.start
         for line in text:
             self.brief["processedLines"] += 1
-            date, time, code = cut_fields(line)
+            date, time_str, code = cut_fields(line)
             if code == "none":
                 self.brief["skippedLines"] += 1
                 continue
@@ -206,10 +200,10 @@ class DataAnalysis:
             xor = ""
             if code == self.CodeVal.startChip.value or code == self.CodeVal.sequence.value\
                     or code == self.CodeVal.silence.value:
-                self.clear()
+                self.pkt_clear()
                 continue
             if state == self.StateMsg.start:
-                self.clear()
+                self.pkt_clear()
                 self.local_brief_clear()
             nxt_state = self.message_process(state, code)
             pattern = ""
@@ -238,17 +232,29 @@ class DataAnalysis:
                     case self.Block.spod:
                         errors, xor = spod_process(code)
                 self.local_brief[self.block] += errors
+                if self.block == self.Block.mem05 or self.block == self.Block.mem0A or \
+                        self.block == self.Block.mem15 or self.block == self.Block.mem1A:
+                    if len(self.local_mem_packet) == 0:
+                        ftm = time.strptime(date + " " + time_str, "%d.%m.%Y %H:%M:%S")
+                        dt = datetime.datetime(ftm.tm_year, ftm.tm_mon, ftm.tm_mday, ftm.tm_hour, ftm.tm_min, ftm.tm_sec)
+                        self.local_mem_packet["time"] = dt.strftime(self.datetime_format)
+                        self.local_mem_packet["data"] = []
+                        self.local_mem_packet["data"] += [[f"{self.address:08X}", pattern, f"{code:08X}", xor]]
+                    else:
+                        ftm = time.strptime(date + " " + time_str, self.datetime_format)
+                        dt = datetime.datetime(ftm.tm_year, ftm.tm_mon, ftm.tm_mday, ftm.tm_hour, ftm.tm_min, ftm.tm_sec)
+                        ftm = time.strptime(self.local_mem_packet["time"], "%d.%m.%Y %H:%M:%S")
+                        dt_packet = datetime.datetime(ftm.tm_year, ftm.tm_mon, ftm.tm_mday,
+                                                      ftm.tm_hour, ftm.tm_min, ftm.tm_sec)
+                        if (dt - dt_packet).seconds < 2:
+                            self.local_mem_packet["data"] += [[f"{self.address:08X}", pattern, f"{code:08X}", xor]]
+                        else:
+                            self.mem_packets.append(self.local_mem_packet)
+                            self.local_mem_packet = {}
             state = nxt_state
             if state == self.StateMsg.angle:
-                self.brief[self.Block.mem05] += self.local_brief[self.Block.mem05]
-                self.brief[self.Block.mem0A] += self.local_brief[self.Block.mem0A]
-                self.brief[self.Block.mem15] += self.local_brief[self.Block.mem15]
-                self.brief[self.Block.mem1A] += self.local_brief[self.Block.mem1A]
-                self.brief[self.Block.spiqf] += self.local_brief[self.Block.spiqf]
-                self.brief[self.Block.uart0] += self.local_brief[self.Block.uart0]
-                self.brief[self.Block.uart1] += self.local_brief[self.Block.uart1]
-                self.brief[self.Block.i2c] += self.local_brief[self.Block.i2c]
-                self.brief[self.Block.spod] += self.local_brief[self.Block.spod]
+                for key in self.local_brief.keys():
+                    self.brief[key] += self.local_brief[key]
                 self.local_brief_clear()
         for key, value in self.brief.items():
             print(f"  {key:14s}: {value}")
@@ -330,12 +336,21 @@ class DataAnalysis:
                 self.angle = code
                 return self.StateMsg.start
 
-    def write_brief(self, filename):
+    def write_brief(self, filename: str):
         work_dir = os.path.split(filename)[0]
         if not os.path.isdir(work_dir):
             os.makedirs(work_dir)
         text = [self.cur_filename + "\n"]
         for key, value in self.brief.items():
-            text.append(f"  {key:14s} {value}\n")
+            text += f"  {key:14s} {value}\n"
+        text += "\n"
         with open(filename, 'a') as f:
             f.writelines(text)
+
+    def write_packets(self, filename: str):
+        work_dir = os.path.split(filename)[0]
+        if not os.path.isdir(work_dir):
+            os.makedirs(work_dir)
+        with open(filename, 'w') as f:
+            f.write(self.cur_filename + "\n")
+            json.dump(self.mem_packets, f, indent=4)
