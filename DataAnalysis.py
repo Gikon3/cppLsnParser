@@ -6,10 +6,53 @@ import sys
 def cut_fields(line: str):
     str_split = line.split(' ')
     match str_split:
-        case date, time, code, *msg:
+        case date, time, code, *_:
             return date, time, code
         case _:
             return "none", "none", "none"
+
+
+def mem_process(val, pattern):
+    xor = ""
+    count = 0
+    for i in range(32):
+        if val & 1 == pattern & 1:
+            xor += '.'
+        elif val & 1 == 0 and pattern & 1 == 1:
+            xor += '-'
+            count += 1
+        elif val & 1 == 1 and pattern & 1 == 0:
+            xor += '+'
+            count += 1
+        else:
+            xor += 'X'
+        val >> 1
+        pattern >> 1
+    return count, xor
+
+
+def spiqf_process(val):
+    xor = ""
+    count = 0
+    return count, xor
+
+
+def uart_process(val):
+    xor = ""
+    count = 0
+    return count, xor
+
+
+def i2c_process(val):
+    xor = ""
+    count = 0
+    return count, xor
+
+
+def spod_process(val):
+    xor = ""
+    count = 0
+    return count, xor
 
 
 class DataAnalysis:
@@ -78,6 +121,17 @@ class DataAnalysis:
         "processedLines":   0,
         "skippedLines":     0
     }
+    local_brief = {
+        Block.mem05: 0,
+        Block.mem0A: 0,
+        Block.mem15: 0,
+        Block.mem1A: 0,
+        Block.spiqf: 0,
+        Block.uart0: 0,
+        Block.uart1: 0,
+        Block.i2c: 0,
+        Block.spod: 0
+    }
 
     StateMsg = Enum("StateMsg", "start header numb addr error hash end angle", start=0)
 
@@ -91,6 +145,7 @@ class DataAnalysis:
     def __init__(self):
         logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
         self.clear()
+        self.local_brief_clear()
         self.brief_clear()
 
     def clear(self):
@@ -100,6 +155,17 @@ class DataAnalysis:
         self.address = 0
         self.hash = 0
         self.angle = 0
+
+    def local_brief_clear(self):
+        self.local_brief[self.Block.mem05] = 0
+        self.local_brief[self.Block.mem0A] = 0
+        self.local_brief[self.Block.mem15] = 0
+        self.local_brief[self.Block.mem1A] = 0
+        self.local_brief[self.Block.spiqf] = 0
+        self.local_brief[self.Block.uart0] = 0
+        self.local_brief[self.Block.uart1] = 0
+        self.local_brief[self.Block.i2c] = 0
+        self.local_brief[self.Block.spod] = 0
 
     def brief_clear(self):
         self.brief[self.Block.mem05] = 0
@@ -112,10 +178,11 @@ class DataAnalysis:
         self.brief[self.Block.i2c] = 0
         self.brief[self.Block.spod] = 0
         self.brief["hashErr"] = 0
+        self.brief["silence"] = 0
         self.brief["processedLines"] = 0
         self.brief["skippedLines"] = 0
 
-    def file_analysis(self, filename: str, numStr: int, workDir: str):
+    def file_analysis(self, filename: str, num_str: int, work_dir: str):
         with open(filename, 'r') as f:
             text = f.readlines()
         self.analysis(text)
@@ -138,36 +205,47 @@ class DataAnalysis:
                     or code == self.CodeVal.silence.value:
                 self.clear()
                 continue
+            if state == self.StateMsg.start:
+                self.clear()
+                self.local_brief_clear()
             nxt_state = self.message_process(state, code)
             if state == self.StateMsg.error:
                 match self.block:
                     case self.Block.mem05:
-                        errors, xor = self.mem_process(code, self.CodeVal.mem05.value)
+                        errors, xor = mem_process(code, self.CodeVal.mem05.value)
                     case self.Block.mem0A:
-                        errors, xor = self.mem_process(code, self.CodeVal.mem0A.value)
+                        errors, xor = mem_process(code, self.CodeVal.mem0A.value)
                     case self.Block.mem15:
-                        errors, xor = self.mem_process(code, self.CodeVal.mem15.value)
+                        errors, xor = mem_process(code, self.CodeVal.mem15.value)
                     case self.Block.mem1A:
-                        errors, xor = self.mem_process(code, self.CodeVal.mem1A.value)
+                        errors, xor = mem_process(code, self.CodeVal.mem1A.value)
                     case self.Block.spiqf:
-                        errors, xor = self.spiqf_process(code)
+                        errors, xor = spiqf_process(code)
                     case self.Block.uart0:
-                        errors, xor = self.uart_process(code)
+                        errors, xor = uart_process(code)
                     case self.Block.uart1:
-                        errors, xor = self.uart_process(code)
+                        errors, xor = uart_process(code)
                     case self.Block.i2c:
-                        errors, xor = self.i2c_process(code)
+                        errors, xor = i2c_process(code)
                     case self.Block.spod:
-                        errors, xor = self.spod_process(code)
+                        errors, xor = spod_process(code)
+                self.local_brief[self.block] += errors
             state = nxt_state
-            if self.block != self.Block.none:
-                self.brief[self.block] += errors
+            if state == self.StateMsg.angle:
+                self.brief[self.Block.mem05] += self.local_brief[self.Block.mem05]
+                self.brief[self.Block.mem0A] += self.local_brief[self.Block.mem0A]
+                self.brief[self.Block.mem15] += self.local_brief[self.Block.mem15]
+                self.brief[self.Block.mem1A] += self.local_brief[self.Block.mem1A]
+                self.brief[self.Block.spiqf] += self.local_brief[self.Block.spiqf]
+                self.brief[self.Block.uart0] += self.local_brief[self.Block.uart0]
+                self.brief[self.Block.uart1] += self.local_brief[self.Block.uart1]
+                self.brief[self.Block.i2c] += self.local_brief[self.Block.i2c]
+                self.brief[self.Block.spod] += self.local_brief[self.Block.spod]
+                self.local_brief_clear()
         for key, value in self.brief.items():
             print(f"  {key:14s}: {value}")
 
     def message_process(self, state: StateMsg, code: int):
-        if state != self.StateMsg.hash and state != self.StateMsg.end and state != self.StateMsg.angle:
-            self.hash ^= code
         match code:
             case self.CodeVal.hashErr.value:
                 self.brief["hashErr"] += 1
@@ -177,14 +255,19 @@ class DataAnalysis:
                 self.brief["startChip"] += 1
                 self.hash = 0
                 return self.StateMsg.start
+            case self.CodeVal.silence.value:
+                self.brief["silence"] += 1
+                self.hash = 0
+                return self.StateMsg.start
+
+        if state != self.StateMsg.hash and state != self.StateMsg.end and state != self.StateMsg.angle:
+            self.hash ^= code
         match state:
             case self.StateMsg.start:
-                self.clear()
                 if code != self.CodeVal.beginMsg.value:
                     self.brief["skippedLines"] += 1
                     # logging.debug("Invalid begin " + str(code) + ", line " + str(self.brief["processedLines"]))
                     return self.StateMsg.start
-                self.hash = code
                 return self.StateMsg.header
             case self.StateMsg.header:
                 if code == self.CodeVal.mem05.value:
@@ -224,7 +307,8 @@ class DataAnalysis:
             case self.StateMsg.hash:
                 self.block = self.Block.none
                 if code != self.hash:
-                    print(str(code) + " " + str(self.hash))
+                    logging.debug("Invalid hash " + str(code) + " " + str(self.hash) +
+                                  ", line " + str(self.brief["processedLines"]))
                     raise Exception("Invalid hash")
                 self.hash = 0
                 return self.StateMsg.end
@@ -237,41 +321,3 @@ class DataAnalysis:
                     raise Exception("Invalid angle")
                 self.angle = code
                 return self.StateMsg.start
-
-    def mem_process(self, val, pattern):
-        xor = ""
-        count = 0
-        for i in range(32):
-            if val & 1 == pattern & 1:
-                xor += '.'
-            elif val & 1 == 0 and pattern & 1 == 1:
-                xor += '-'
-                count += 1
-            elif val & 1 == 1 and pattern & 1 == 0:
-                xor += '+'
-                count += 1
-            else:
-                xor += 'X'
-            val >> 1
-            pattern >> 1
-        return count, xor
-
-    def spiqf_process(self, val):
-        xor = ""
-        count = 0
-        return count, xor
-
-    def uart_process(self, val):
-        xor = ""
-        count = 0
-        return count, xor
-
-    def i2c_process(self, val):
-        xor = ""
-        count = 0
-        return count, xor
-
-    def spod_process(self, val):
-        xor = ""
-        count = 0
-        return count, xor
