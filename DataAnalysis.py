@@ -150,6 +150,7 @@ class DataAnalysis:
     cur_filename = ""
     mem_packets = []
     local_mem_packet = {}
+    mem_coords = []
 
     def __init__(self):
         logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
@@ -157,8 +158,9 @@ class DataAnalysis:
 
     def clear(self):
         self.cur_filename = ""
-        packets = json.dumps([], sort_keys=True, indent=4)
-        local_packet = []
+        self.mem_packets = []
+        self.local_mem_packet = {}
+        self.mem_coords = []
         self.pkt_clear()
         self.local_brief_clear()
         self.brief_clear()
@@ -180,6 +182,7 @@ class DataAnalysis:
             self.brief[key] = 0
 
     def file_analysis(self, filename: str, num_str: int):
+        self.clear()
         self.cur_filename = filename
         self.pkt_clear()
         self.brief_clear()
@@ -190,12 +193,12 @@ class DataAnalysis:
     def analysis(self, text: list):
         state = self.StateMsg.start
         for line in text:
-            self.brief["processedLines"] += 1
-            date, time_str, code = cut_fields(line)
-            if code == "none":
-                self.brief["skippedLines"] += 1
+            self.brief['processedLines'] += 1
+            date_str, time_str, code_str = cut_fields(line)
+            if code_str == "none":
+                self.brief['skippedLines'] += 1
                 continue
-            code = int(code, 16)
+            code = int(code_str, 16)
             errors = 0
             xor = ""
             if code == self.CodeVal.startChip.value or code == self.CodeVal.sequence.value\
@@ -231,47 +234,75 @@ class DataAnalysis:
                         errors, xor = i2c_process(code)
                     case self.Block.spod:
                         errors, xor = spod_process(code)
+
                 self.local_brief[self.block] += errors
                 if self.block == self.Block.mem05 or self.block == self.Block.mem0A or \
                         self.block == self.Block.mem15 or self.block == self.Block.mem1A:
-                    if len(self.local_mem_packet) == 0:
-                        ftm = time.strptime(date + " " + time_str, "%d.%m.%Y %H:%M:%S")
-                        dt = datetime.datetime(ftm.tm_year, ftm.tm_mon, ftm.tm_mday, ftm.tm_hour, ftm.tm_min, ftm.tm_sec)
-                        self.local_mem_packet["time"] = dt.strftime(self.datetime_format)
-                        self.local_mem_packet["data"] = []
-                        self.local_mem_packet["data"] += [[f"{self.address:08X}", pattern, f"{code:08X}", xor]]
-                    else:
-                        ftm = time.strptime(date + " " + time_str, self.datetime_format)
-                        dt = datetime.datetime(ftm.tm_year, ftm.tm_mon, ftm.tm_mday, ftm.tm_hour, ftm.tm_min, ftm.tm_sec)
-                        ftm = time.strptime(self.local_mem_packet["time"], "%d.%m.%Y %H:%M:%S")
+                    ftm = time.strptime(date_str + " " + time_str, self.datetime_format)
+                    dt = datetime.datetime(ftm.tm_year, ftm.tm_mon, ftm.tm_mday, ftm.tm_hour, ftm.tm_min, ftm.tm_sec)
+                    if len(self.local_mem_packet) > 0:
+                        ftm = time.strptime(self.local_mem_packet['time'], self.datetime_format)
                         dt_packet = datetime.datetime(ftm.tm_year, ftm.tm_mon, ftm.tm_mday,
                                                       ftm.tm_hour, ftm.tm_min, ftm.tm_sec)
-                        if (dt - dt_packet).seconds < 2:
-                            self.local_mem_packet["data"] += [[f"{self.address:08X}", pattern, f"{code:08X}", xor]]
-                        else:
+                        if (dt - dt_packet).seconds >= 2:
                             self.mem_packets.append(self.local_mem_packet)
                             self.local_mem_packet = {}
-            state = nxt_state
+                    del ftm
+
+                    if len(self.local_mem_packet) == 0:
+                        self.local_mem_packet['time'] = dt.strftime(self.datetime_format)
+                        self.local_mem_packet['data'] = []
+                    self.local_mem_packet['data'] += [{
+                        'adr': f"{self.address:08X}",
+                        'pat': pattern,
+                        'val': f"{code:08X}",
+                        'bin': xor,
+                        'angle': "none"
+                    }]
+
+            if state == self.StateMsg.angle and len(self.local_mem_packet) > 0 and \
+                    self.local_mem_packet['data'][-1]['angle'] == "none":
+                for pack in self.local_mem_packet['data'][::-1]:
+                    if pack['angle'] != "none":
+                        break
+                    pack['angle'] = self.angle
+
             if state == self.StateMsg.angle:
                 for key in self.local_brief.keys():
                     self.brief[key] += self.local_brief[key]
                 self.local_brief_clear()
+            state = nxt_state
+        self.analysis_coords()
         for key, value in self.brief.items():
             print(f"  {key:14s}: {value}")
+
+    def analysis_coords(self):
+        for i, timeframe in enumerate(self.mem_packets):
+            data = timeframe['data']
+            pack_coords = []
+            for pack in data:
+                for bit_simb in pack['bin']:
+                    if bit_simb == '+' or bit_simb == '-':
+                        addr_bin = "{0:032b}".format(int(pack['adr'], 16))
+                        msb_x = i % 0x20
+                        lsb_x = 7 - int(addr_bin[-5:-2], 2) if i < 16 else int(addr_bin[-5:-2], 2)
+                        x = int(f"{msb_x:05b}{lsb_x:03b}", 2)
+                        msb_y = int(addr_bin[-24:-10], 2)
+                        lsb_y = int(addr_bin[-10:-6], 2)
+                        y = int(f"{msb_y:014b}{lsb_y:04b}", 2)
+                        pack_coords += [[x, y]]
+            self.mem_coords += [{'angle': data[0]['angle'], 'coords': pack_coords}]
 
     def message_process(self, state: StateMsg, code: int):
         match code:
             case self.CodeVal.hashErr.value:
-                self.brief["hashErr"] += 1
-                self.hash = 0
+                self.brief['hashErr'] += 1
                 return self.StateMsg.start
             case self.CodeVal.startChip.value:
-                self.brief["startChip"] += 1
-                self.hash = 0
+                self.brief['startChip'] += 1
                 return self.StateMsg.start
             case self.CodeVal.silence.value:
-                self.brief["silence"] += 1
-                self.hash = 0
+                self.brief['silence'] += 1
                 return self.StateMsg.start
 
         if state != self.StateMsg.hash and state != self.StateMsg.end and state != self.StateMsg.angle:
@@ -279,7 +310,7 @@ class DataAnalysis:
         match state:
             case self.StateMsg.start:
                 if code != self.CodeVal.beginMsg.value:
-                    self.brief["skippedLines"] += 1
+                    self.brief['skippedLines'] += 1
                     # logging.debug("Invalid begin " + str(code) + ", line " + str(self.brief["processedLines"]))
                     return self.StateMsg.start
                 return self.StateMsg.header
@@ -303,7 +334,7 @@ class DataAnalysis:
                 elif code == self.CodeVal.spod.value:
                     self.block = self.Block.spod
                 else:
-                    self.brief["skippedLines"] += 1
+                    self.brief['skippedLines'] += 1
                     # logging.debug("Invalid Block " + str(code) + ", line " + str(self.brief["processedLines"]))
                     return self.StateMsg.start
                 return self.StateMsg.numb
@@ -322,7 +353,7 @@ class DataAnalysis:
                 self.block = self.Block.none
                 if code != self.hash:
                     logging.debug("Invalid hash " + str(code) + " " + str(self.hash) +
-                                  ", line " + str(self.brief["processedLines"]))
+                                  ", line " + str(self.brief['processedLines']))
                     raise Exception("Invalid hash")
                 self.hash = 0
                 return self.StateMsg.end
@@ -354,3 +385,25 @@ class DataAnalysis:
         with open(filename, 'w') as f:
             f.write(self.cur_filename + "\n")
             json.dump(self.mem_packets, f, indent=4)
+
+    def write_coords(self, filename: str):
+        work_dir = os.path.split(filename)[0]
+        if not os.path.isdir(work_dir):
+            os.makedirs(work_dir)
+        with open(filename, 'w') as f:
+            f.write(self.cur_filename + "\n")
+            json.dump(self.mem_coords, f, indent=4)
+
+    def write_coords_wolfram(self, filename: str):
+        work_dir = os.path.split(filename)[0]
+        if not os.path.isdir(work_dir):
+            os.makedirs(work_dir)
+        with open(filename, 'w') as f:
+            for pack in self.mem_coords:
+                line = "{{"
+                for coords in pack['coords'][:-1]:
+                    line += f"{{{coords[0]},{coords[1]}}},"
+                line += f"{{{pack['coords'][-1][0]},{pack['coords'][-1][1]}}}"
+                line += "}"
+                line += f",{pack['angle']}}}"
+                f.write(line + "\n")
