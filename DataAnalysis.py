@@ -61,6 +61,7 @@ def spod_process(val):
 
 class DataAnalysis:
     thrErrors = 64
+    MUX = 8
     Block = Enum("Block", "none mem05 mem0A mem15 mem1A spiqf uart0 uart1 i2c spod", start=0)
     pattern = {
         Block.mem05: 0x55555555,
@@ -277,19 +278,16 @@ class DataAnalysis:
             print(f"  {key:14s}: {value}")
 
     def analysis_coords(self):
-        for i, timeframe in enumerate(self.mem_packets):
+        for timeframe in self.mem_packets:
             data = timeframe['data']
             pack_coords = []
             for pack in data:
-                for bit_simb in pack['bin']:
+                for num_bit, bit_simb in enumerate(pack['bin'][::-1]):
                     if bit_simb == '+' or bit_simb == '-':
-                        addr_bin = "{0:032b}".format(int(pack['adr'], 16))
-                        msb_x = i % 0x20
-                        lsb_x = 7 - int(addr_bin[-5:-2], 2) if i < 16 else int(addr_bin[-5:-2], 2)
-                        x = int(f"{msb_x:05b}{lsb_x:03b}", 2)
-                        msb_y = int(addr_bin[-24:-10], 2)
-                        lsb_y = int(addr_bin[-10:-6], 2)
-                        y = int(f"{msb_y:014b}{lsb_y:04b}", 2)
+                        num_word = int(pack['adr'], 16) // 4;
+                        num_word_in_line = num_word % self.MUX
+                        y = num_word // self.MUX
+                        x = num_bit * self.MUX + num_word_in_line
                         pack_coords += [[x, y]]
             self.mem_coords += [{'angle': data[0]['angle'], 'coords': pack_coords}]
 
