@@ -284,7 +284,7 @@ class DataAnalysis:
             for pack in data:
                 for num_bit, bit_simb in enumerate(pack['bin'][::-1]):
                     if bit_simb == '+' or bit_simb == '-':
-                        num_word = int(pack['adr'], 16) // 4;
+                        num_word = int(pack['adr'], 16) // 4
                         num_word_in_line = num_word % self.MUX
                         y = num_word // self.MUX
                         x = num_bit * self.MUX + num_word_in_line
