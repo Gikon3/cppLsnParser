@@ -287,7 +287,8 @@ class DataAnalysis:
                         num_word = (int(pack['adr'], 16) - 0x10020000) // 4
                         num_word_in_line = num_word % self.MUX
                         y = num_word // self.MUX
-                        x = num_bit * self.MUX + num_word_in_line + 1
+                        x = num_bit * self.MUX + num_word_in_line + 1 if (num_bit < 16) \
+                        else num_bit * self.MUX + (7 -num_word_in_line) + 1
                         pack_coords += [[x, y]]
             self.mem_coords += [{'angle': data[0]['angle'], 'coords': pack_coords}]
 
